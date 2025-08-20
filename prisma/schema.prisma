@@ -1,0 +1,346 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Artist {
+  id      String @id @default(cuid())
+  name    String
+  status  ArtistStatus @default(ACTIVE)
+  
+  projects        Project[]
+  recoupmentLedger RecoupmentLedger[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("artists")
+}
+
+model Project {
+  id        String @id @default(cuid())
+  code      String @unique
+  name      String
+  artistId  String?
+  type      ProjectType
+  status    ProjectStatus @default(ACTIVE)
+  mode      ProjectMode
+  startDate DateTime?
+  endDate   DateTime?
+  
+  artist            Artist? @relation(fields: [artistId], references: [id])
+  budgets           Budget[]
+  timesheetEntries  TimesheetEntry[]
+  externalExpenses  ExternalExpense[]
+  income            Income[]
+  reconciliationLedger ReconciliationLedger[]
+  recoupmentLedger  RecoupmentLedger[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("projects")
+}
+
+model Budget {
+  id              String @id @default(cuid())
+  projectId       String
+  currency        String @default("GBP")
+  totalAmount     Int // amount in minor currency units (pence)
+  alertThresholds Json @default("[0.75, 0.9, 1.0]")
+  
+  project         Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  lineItems       BudgetLineItem[]
+  alerts          Alert[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("budgets")
+}
+
+model BudgetLineItem {
+  id              String @id @default(cuid())
+  budgetId        String
+  name            String
+  category        String
+  allocatedAmount Int // amount in minor currency units
+  
+  budget                Budget @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  timesheetAllocations  TimesheetAllocation[]
+  reconciliationLedger  ReconciliationLedger[]
+  alerts               Alert[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("budget_line_items")
+}
+
+model User {
+  id       String @id @default(cuid())
+  name     String?
+  email    String @unique
+  password String
+  role     UserRole @default(ARTIST_VIEW)
+  
+  rateCards         RateCard[]
+  timesheetEntries  TimesheetEntry[]
+  reconciliationCreated ReconciliationLedger[] @relation("ReconciliationCreatedBy")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("users")
+}
+
+model BillingRole {
+  id           String @id @default(cuid())
+  name         String
+  amountPerHour Int // amount in minor currency units per hour
+  currency     String @default("GBP")
+  
+  reconciliationLedger ReconciliationLedger[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("billing_roles")
+}
+
+model RateCard {
+  id           String @id @default(cuid())
+  userId       String
+  amountPerHour Int // amount in minor currency units per hour
+  currency     String @default("GBP")
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("rate_cards")
+}
+
+model TimesheetEntry {
+  id          String @id @default(cuid())
+  userId      String?
+  projectId   String
+  date        DateTime
+  description String
+  hoursDecimal Decimal @db.Decimal(4, 1) // 0.1 hour granularity (6-minute increments)
+  source      TimesheetSource
+  externalRef String?
+  
+  user        User? @relation(fields: [userId], references: [id])
+  project     Project @relation(fields: [projectId], references: [id])
+  allocations TimesheetAllocation[]
+  reconciliationLedger ReconciliationLedger[] @relation("ReconciliationToTimesheet")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("timesheet_entries")
+}
+
+model TimesheetAllocation {
+  id              String @id @default(cuid())
+  timesheetId     String
+  budgetLineItemId String
+  hoursDecimal    Decimal @db.Decimal(4, 1)
+  
+  timesheet     TimesheetEntry @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
+  budgetLineItem BudgetLineItem @relation(fields: [budgetLineItemId], references: [id])
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("timesheet_allocations")
+}
+
+model ExternalExpense {
+  id            String @id @default(cuid())
+  projectId     String?
+  vendor        String
+  date          DateTime
+  description   String
+  amountNetMinor Int // net amount in minor currency units
+  amountVatMinor Int? // VAT amount in minor currency units
+  currency      String @default("GBP")
+  source        ExpenseSource
+  projectCode   String?
+  artistTag     String?
+  externalRef   String?
+  
+  project       Project? @relation(fields: [projectId], references: [id])
+  reconciliationLedger ReconciliationLedger[] @relation("ReconciliationToExternalExpense")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("external_expenses")
+}
+
+model Income {
+  id          String @id @default(cuid())
+  projectId   String?
+  date        DateTime
+  description String
+  amountMinor Int // amount in minor currency units (net)
+  currency    String @default("GBP")
+  source      IncomeSource
+  projectCode String?
+  artistTag   String?
+  externalRef String?
+  
+  project     Project? @relation(fields: [projectId], references: [id])
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("income")
+}
+
+model ReconciliationLedger {
+  id               String @id @default(cuid())
+  projectId        String
+  budgetLineItemId String?
+  kind             ReconciliationKind
+  refTable         String? // 'TimesheetEntry' | 'ExternalExpense' | null
+  refId            String?
+  hours            Decimal? @db.Decimal(4, 1)
+  rateUsedMinor    Int? // rate used in minor currency units
+  amountMinor      Int // amount in minor currency units
+  currency         String @default("GBP")
+  billingRoleId    String?
+  writeoffReason   String?
+  createdBy        String
+  meta             Json?
+  
+  project         Project @relation(fields: [projectId], references: [id])
+  budgetLineItem  BudgetLineItem? @relation(fields: [budgetLineItemId], references: [id])
+  billingRole     BillingRole? @relation(fields: [billingRoleId], references: [id])
+  creator         User @relation("ReconciliationCreatedBy", fields: [createdBy], references: [id])
+  timesheetEntry  TimesheetEntry? @relation("ReconciliationToTimesheet", fields: [refId], references: [id], map: "reconciliation_timesheet_fkey")
+  externalExpense ExternalExpense? @relation("ReconciliationToExternalExpense", fields: [refId], references: [id], map: "reconciliation_expense_fkey")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("reconciliation_ledger")
+}
+
+model RecoupmentLedger {
+  id             String @id @default(cuid())
+  artistId       String
+  scope          RecoupmentScope
+  projectId      String?
+  entryType      RecoupmentEntryType
+  amountMinor    Int // amount in minor currency units
+  currency       String @default("GBP")
+  note           String
+  calcSnapshot   Json?
+  
+  artist  Artist @relation(fields: [artistId], references: [id])
+  project Project? @relation(fields: [projectId], references: [id])
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("recoupment_ledger")
+}
+
+model Alert {
+  id         String @id @default(cuid())
+  scope      AlertScope
+  refId      String // budget_id or budget_line_item_id
+  type       AlertType
+  level      Decimal @db.Decimal(3, 2) // 0.75, 0.9, 1.0
+  resolvedAt DateTime?
+  
+  budget         Budget? @relation(fields: [refId], references: [id], map: "alert_budget_fkey")
+  budgetLineItem BudgetLineItem? @relation(fields: [refId], references: [id], map: "alert_budget_line_item_fkey")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("alerts")
+}
+
+// Enums
+enum ArtistStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ProjectType {
+  ARTIST
+  INTERNAL
+}
+
+enum ProjectStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum ProjectMode {
+  STANDALONE
+  MAIN_TAB
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  ARTIST_VIEW
+}
+
+enum TimesheetSource {
+  NATIVE
+  CLOCKIFY_IMPORT
+}
+
+enum ExpenseSource {
+  XERO_IMPORT
+  MANUAL
+}
+
+enum IncomeSource {
+  XERO_IMPORT
+  MANUAL
+}
+
+enum ReconciliationKind {
+  TIME
+  EXPENSE
+  WRITEOFF
+}
+
+enum RecoupmentScope {
+  PROJECT
+  MAIN_TAB
+}
+
+enum RecoupmentEntryType {
+  EXPENSE_ADD
+  TIME_ADD
+  INCOME_APPLY
+  PROFIT_SPLIT
+  WRITEOFF_APPLY
+}
+
+enum AlertScope {
+  LINE_ITEM
+  BUDGET
+}
+
+enum AlertType {
+  THRESHOLD_REACHED
+  EXCEEDED
+}
