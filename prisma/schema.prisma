@@ -262,18 +262,22 @@ model RecoupmentLedger {
 model Alert {
   id         String @id @default(cuid())
   scope      AlertScope
-  refId      String // budget_id or budget_line_item_id
   type       AlertType
   level      Decimal @db.Decimal(3, 2) // 0.75, 0.9, 1.0
   resolvedAt DateTime?
   
-  budget         Budget? @relation(fields: [refId], references: [id], map: "alert_budget_fkey")
-  budgetLineItem BudgetLineItem? @relation(fields: [refId], references: [id], map: "alert_budget_line_item_fkey")
+  // Separate fields for different reference types
+  budgetId         String?
+  budgetLineItemId String?
+  
+  budget         Budget? @relation(fields: [budgetId], references: [id])
+  budgetLineItem BudgetLineItem? @relation(fields: [budgetLineItemId], references: [id])
   
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   
   @@map("alerts")
+}
 }
 
 // Enums
